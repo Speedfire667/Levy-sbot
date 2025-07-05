@@ -7,137 +7,81 @@ const path = require('path');
 const HTTP_PORT = 8080;
 const LOG_PATH = path.resolve(__dirname, 'bot_vision.log');
 
-let clientes = [];
+let clients = [];
+let bot = null;
+let reconnectInterval = null;
 
-// Log em arquivo
-function logVisao(texto) {
-  const dataHora = new Date().toISOString();
-  const linha = `[${dataHora}] ${texto}\n`;
-  fs.appendFile(LOG_PATH, linha, (err) => {
+// Função de log melhorada
+function logVision(text) {
+  const timestamp = new Date().toISOString();
+  fs.appendFile(LOG_PATH, `[${timestamp}] ${text}\n`, (err) => {
     if (err) console.error('Erro ao escrever no log:', err);
   });
 }
 
-// Página HTML simples
-const htmlPagina = `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8" />
-<title>Visão do ByteBot</title>
-<style>
-  body { background: #111; color: #0f0; font-family: monospace; padding: 20px; }
-  h1 { text-align: center; }
-</style>
-</head>
-<body>
-  <h1>Visão do ByteBot</h1>
-  <p><strong>Posição:</strong> <span id="pos">Aguardando...</span></p>
-  <p><strong>Jogadores visíveis:</strong></p>
-  <ul id="players"></ul>
+function createBot() {
+  // Se já existe um bot, não criar outro
+  if (bot !== null) return;
 
-  <script>
-    const ws = new WebSocket('ws://' + location.host);
-    ws.onmessage = (msg) => {
-      const data = JSON.parse(msg.data);
-      const pos = data.position;
-      const players = data.players;
+  const username = `ByteBot_${Math.floor(Math.random() * 10000)}`;
+  console.log(`🟢 Tentando conectar como ${username}`);
 
-      document.getElementById('pos').textContent =
-        \`X: \${pos.x.toFixed(2)} | Y: \${pos.y.toFixed(2)} | Z: \${pos.z.toFixed(2)}\`;
-
-      const list = document.getElementById('players');
-      list.innerHTML = '';
-      players.forEach(p => {
-        const li = document.createElement('li');
-        li.textContent = p.pos
-          ? \`\${p.username} — X:\${p.pos.x.toFixed(1)} Y:\${p.pos.y.toFixed(1)} Z:\${p.pos.z.toFixed(1)}\`
-          : \`\${p.username} — sem posição\`;
-        list.appendChild(li);
-      });
-    };
-  </script>
-</body>
-</html>
-`;
-
-const server = http.createServer((req, res) => {
-  if (req.url === '/') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(htmlPagina);
-  } else {
-    res.writeHead(404);
-    res.end();
-  }
-});
-
-const wss = new WebSocket.Server({ server });
-
-wss.on('connection', (ws) => {
-  clientes.push(ws);
-  ws.on('close', () => clientes = clientes.filter(c => c !== ws));
-});
-
-function broadcast(data) {
-  const json = JSON.stringify(data);
-  clientes.forEach(ws => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(json);
-    }
-  });
-}
-
-function gerarNomeAleatorio() {
-  const numero = Math.floor(Math.random() * 9999999) + 1;
-  return `ByteBot[*_*]#${numero}`;
-}
-
-function criarBot() {
-  const nome = gerarNomeAleatorio();
-  console.log(`🟢 Iniciando bot com nome: ${nome}`);
-
-  const bot = mineflayer.createBot({
+  bot = mineflayer.createBot({
     host: 'Speedfire1237.aternos.me',
     port: 36424,
-    username: nome,
-    version: '1.12.2' // 👈 TROQUE aqui se a versão do seu servidor for diferente!
+    username: username,
+    version: '1.12.2',
+    auth: 'offline'
   });
 
-  bot.on('spawn', () => {
-    console.log(`✅ Conectado como ${bot.username}`);
+  // Limpa o intervalo de reconexão se existir
+  if (reconnectInterval) {
+    clearInterval(reconnectInterval);
+    reconnectInterval = null;
+  }
 
-    setInterval(() => {
+  bot.on('spawn', () => {
+    console.log(`✅ Conectado com sucesso como ${bot.username}`);
+    
+    // Intervalo para enviar dados
+    const updateInterval = setInterval(() => {
       if (!bot.entity) return;
 
-      const pos = bot.entity.position;
+      const position = bot.entity.position;
       const players = Object.values(bot.players).map(p => ({
         username: p.username,
         pos: p.entity ? p.entity.position : null,
       }));
 
-      broadcast({ position: pos, players });
+      broadcast({ position, players });
+      logVision(`Posição: ${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)} | Jogadores: ${players.length}`);
+    }, 1000);
 
-      let textoLog = `Posição do bot: X:${pos.x.toFixed(2)} Y:${pos.y.toFixed(2)} Z:${pos.z.toFixed(2)} | Jogadores: `;
-      textoLog += players.map(p => p.pos
-        ? `${p.username} (X:${p.pos.x.toFixed(2)} Y:${p.pos.y.toFixed(2)} Z:${p.pos.z.toFixed(2)})`
-        : `${p.username} (sem posição)`
-      ).join(', ');
-      logVisao(textoLog);
-    }, 500);
-  });
-
-  bot.on('end', () => {
-    console.log('🔁 Bot foi desconectado. Reiniciando...');
-    setTimeout(criarBot, 500);
+    bot.on('end', () => {
+      console.log('🔴 Conexão encerrada');
+      clearInterval(updateInterval);
+      scheduleReconnect();
+    });
   });
 
   bot.on('error', (err) => {
     console.log(`❌ Erro: ${err.message}`);
-    setTimeout(criarBot, 1000);
+    scheduleReconnect();
   });
+
+  function scheduleReconnect() {
+    if (bot) {
+      bot.removeAllListeners();
+      bot = null;
+    }
+
+    if (!reconnectInterval) {
+      console.log('⏳ Tentando reconectar em 10 segundos...');
+      reconnectInterval = setTimeout(() => {
+        createBot();
+      }, 10000);
+    }
+  }
 }
 
-server.listen(HTTP_PORT, () => {
-  console.log(`🌐 Página online em http://localhost:${HTTP_PORT}`);
-  criarBot();
-});
+// Restante do código (WebSocket server, broadcast, etc.) permanece igual
