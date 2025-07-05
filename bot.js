@@ -24,14 +24,14 @@ const htmlPagina = `
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>Visão do ByteBot</title>
+<title>Visão do LevyBot</title>
 <style>
   body { background: #111; color: #0f0; font-family: monospace; padding: 20px; }
   h1 { text-align: center; }
 </style>
 </head>
 <body>
-  <h1>Visão do ByteBot</h1>
+  <h1>Visão do LevyBot</h1>
   <p><strong>Posição do bot:</strong> <span id="pos">Aguardando...</span></p>
   <p><strong>Jogadores visíveis:</strong></p>
   <ul id="players"></ul>
@@ -103,7 +103,7 @@ function broadcast(data) {
 
 function gerarNomeAleatorio() {
   const numero = Math.floor(Math.random() * 9999999) + 1;
-  return `ByteBot[*_*]#${numero}`;
+  return LevyBot[*_*]#${numero}`;
 }
 
 function criarBot() {
@@ -111,8 +111,8 @@ function criarBot() {
   console.log(`Tentando entrar como: ${nome}`);
 
   const bot = mineflayer.createBot({
-    host: 'teu-servidor.aternos.me', // troca aqui
-    port: 25565,
+    host: 'Speedfire1237.aternos.me', // troca aqui
+    port: 36424,
     username: nome,
   });
 
