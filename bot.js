@@ -9,7 +9,7 @@ const LOG_PATH = path.resolve(__dirname, 'bot_vision.log');
 
 let clientes = [];
 
-// Função para escrever no log
+// Log em arquivo
 function logVisao(texto) {
   const dataHora = new Date().toISOString();
   const linha = `[${dataHora}] ${texto}\n`;
@@ -18,50 +18,42 @@ function logVisao(texto) {
   });
 }
 
-// Servidor HTTP para servir a página web
+// Página HTML simples
 const htmlPagina = `
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>Visão do LevyBot</title>
+<title>Visão do ByteBot</title>
 <style>
   body { background: #111; color: #0f0; font-family: monospace; padding: 20px; }
   h1 { text-align: center; }
 </style>
 </head>
 <body>
-  <h1>Visão do LevyBot</h1>
-  <p><strong>Posição do bot:</strong> <span id="pos">Aguardando...</span></p>
+  <h1>Visão do ByteBot</h1>
+  <p><strong>Posição:</strong> <span id="pos">Aguardando...</span></p>
   <p><strong>Jogadores visíveis:</strong></p>
   <ul id="players"></ul>
 
   <script>
     const ws = new WebSocket('ws://' + location.host);
-    ws.onopen = () => console.log('Conectado ao bot');
-    ws.onclose = () => {
-      console.log('Conexão perdida');
-      document.getElementById('pos').textContent = 'Desconectado';
-      document.getElementById('players').innerHTML = '';
-    };
     ws.onmessage = (msg) => {
       const data = JSON.parse(msg.data);
       const pos = data.position;
       const players = data.players;
 
       document.getElementById('pos').textContent =
-        \`X: \${pos.x.toFixed(2)}, Y: \${pos.y.toFixed(2)}, Z: \${pos.z.toFixed(2)}\`;
+        \`X: \${pos.x.toFixed(2)} | Y: \${pos.y.toFixed(2)} | Z: \${pos.z.toFixed(2)}\`;
 
-      const playersUl = document.getElementById('players');
-      playersUl.innerHTML = '';
+      const list = document.getElementById('players');
+      list.innerHTML = '';
       players.forEach(p => {
         const li = document.createElement('li');
-        if(p.pos) {
-          li.textContent = \`\${p.username} — X: \${p.pos.x.toFixed(2)}, Y: \${p.pos.y.toFixed(2)}, Z: \${p.pos.z.toFixed(2)}\`;
-        } else {
-          li.textContent = \`\${p.username} — sem posição\`;
-        }
-        playersUl.appendChild(li);
+        li.textContent = p.pos
+          ? \`\${p.username} — X:\${p.pos.x.toFixed(1)} Y:\${p.pos.y.toFixed(1)} Z:\${p.pos.z.toFixed(1)}\`
+          : \`\${p.username} — sem posição\`;
+        list.appendChild(li);
       });
     };
   </script>
@@ -70,7 +62,6 @@ const htmlPagina = `
 `;
 
 const server = http.createServer((req, res) => {
-  // Serve só a página HTML na raiz
   if (req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(htmlPagina);
@@ -84,12 +75,7 @@ const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws) => {
   clientes.push(ws);
-  console.log('Cliente conectado na página web');
-
-  ws.on('close', () => {
-    clientes = clientes.filter(c => c !== ws);
-    console.log('Cliente desconectado');
-  });
+  ws.on('close', () => clientes = clientes.filter(c => c !== ws));
 });
 
 function broadcast(data) {
@@ -103,21 +89,22 @@ function broadcast(data) {
 
 function gerarNomeAleatorio() {
   const numero = Math.floor(Math.random() * 9999999) + 1;
-  return LevyBot[*_*]#${numero}`;
+  return `ByteBot[*_*]#${numero}`;
 }
 
 function criarBot() {
   const nome = gerarNomeAleatorio();
-  console.log(`Tentando entrar como: ${nome}`);
+  console.log(`🟢 Iniciando bot com nome: ${nome}`);
 
   const bot = mineflayer.createBot({
-    host: 'Speedfire1237.aternos.me', // troca aqui
+    host: 'Speedfire1237.aternos.me',
     port: 36424,
     username: nome,
+    version: '1.19.3' // 👈 TROQUE aqui se a versão do seu servidor for diferente!
   });
 
   bot.on('spawn', () => {
-    console.log(`Bot conectado como ${bot.username}`);
+    console.log(`✅ Conectado como ${bot.username}`);
 
     setInterval(() => {
       if (!bot.entity) return;
@@ -128,35 +115,29 @@ function criarBot() {
         pos: p.entity ? p.entity.position : null,
       }));
 
-      const data = {
-        position: { x: pos.x, y: pos.y, z: pos.z },
-        players,
-      };
-
-      broadcast(data);
+      broadcast({ position: pos, players });
 
       let textoLog = `Posição do bot: X:${pos.x.toFixed(2)} Y:${pos.y.toFixed(2)} Z:${pos.z.toFixed(2)} | Jogadores: `;
       textoLog += players.map(p => p.pos
         ? `${p.username} (X:${p.pos.x.toFixed(2)} Y:${p.pos.y.toFixed(2)} Z:${p.pos.z.toFixed(2)})`
         : `${p.username} (sem posição)`
       ).join(', ');
-
       logVisao(textoLog);
     }, 500);
   });
 
   bot.on('end', () => {
-    console.log('Bot desconectado. Tentando outro nome...');
-    setTimeout(criarBot, 100);
+    console.log('🔁 Bot foi desconectado. Reiniciando...');
+    setTimeout(criarBot, 500);
   });
 
   bot.on('error', (err) => {
-    console.log(`Erro: ${err.message}`);
-    setTimeout(criarBot, 100);
+    console.log(`❌ Erro: ${err.message}`);
+    setTimeout(criarBot, 1000);
   });
 }
 
 server.listen(HTTP_PORT, () => {
-  console.log(`Servidor HTTP rodando na porta ${HTTP_PORT}`);
+  console.log(`🌐 Página online em http://localhost:${HTTP_PORT}`);
   criarBot();
 });
