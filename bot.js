@@ -100,7 +100,7 @@ function criarBot() {
     host: 'Speedfire1237.aternos.me',
     port: 36424,
     username: nome,
-    version: '1.19.3' // 👈 TROQUE aqui se a versão do seu servidor for diferente!
+    version: '1.12.2' // 👈 TROQUE aqui se a versão do seu servidor for diferente!
   });
 
   bot.on('spawn', () => {
