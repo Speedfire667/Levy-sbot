@@ -1,58 +1,51 @@
 const mineflayer = require('mineflayer');
 const http = require('http');
 const WebSocket = require('ws');
-const fs = require('fs');
 const path = require('path');
 
-// Configurações
-const HTTP_PORT = 8080;
-const LOG_PATH = path.resolve(__dirname, 'bot_vision.log');
-
+// CONFIGS
+const PORT = 8080;
 let clients = [];
 let bot = null;
 let reconnectTimeout = null;
 let isReconnecting = false;
 
-// Função para escrever no log
+// FUNÇÃO DE LOG
 function logVision(text) {
   const timestamp = new Date().toISOString();
   const logLine = `[${timestamp}] ${text}`;
-  console.log(logLine); // Log no terminal
-  fs.appendFile(LOG_PATH, logLine + '\n', (err) => {
-    if (err) console.error('[LOG ERROR] Não foi possível salvar log:', err);
-  });
+  console.log(logLine);
+  broadcast({ log: logLine });
 }
 
-// Cria o bot
+// FUNÇÃO PRA CRIAR O BOT
 function createBot() {
   if (bot !== null) {
-    logVision('🛑 Tentativa de criar bot quando já existe.');
+    logVision('⚠️ Bot já existe. Cancelando criação.');
     return;
   }
 
   const username = `ByteBot_${Math.floor(Math.random() * 10000)}`;
-  logVision(`🟢 Criando bot com username: ${username}`);
+  logVision(`🤖 Criando bot como ${username}`);
 
   bot = mineflayer.createBot({
     host: 'Speedfire1237.aternos.me',
     port: 36424,
     username: username,
-    version: '1.19.3', // ou use 'auto' se quiser tentar automático
+    version: '1.12.2', // 👈 Versão certa!
     auth: 'offline'
   });
 
-  // Se reconectando, limpa timeout
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
   }
 
-  // Eventos do bot
   bot.on('spawn', () => {
-    logVision(`✅ Bot ${bot.username} entrou no servidor!`);
+    logVision(`✅ Bot conectado: ${bot.username}`);
 
-    const updateInterval = setInterval(() => {
-      if (!bot?.entity) return;
+    const interval = setInterval(() => {
+      if (!bot.entity) return;
 
       const position = bot.entity.position;
       const players = Object.values(bot.players).map(p => ({
@@ -61,97 +54,204 @@ function createBot() {
       }));
 
       broadcast({ position, players });
-
-      logVision(`📍 Posição: ${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)} | Jogadores online: ${players.length}`);
     }, 1000);
 
-    // Quando o bot sai
-    bot.on('end', () => {
-      logVision('🔴 Bot desconectado do servidor.');
-      clearInterval(updateInterval);
+    bot.once('end', () => {
+      logVision('🔴 Bot desconectado.');
+      clearInterval(interval);
       scheduleReconnect();
     });
 
-    // Quando é kickado
-    bot.on('kicked', (reason, loggedIn) => {
-      logVision(`⚠️ Bot foi kickado: ${reason}`);
-      clearInterval(updateInterval);
+    bot.once('kicked', reason => {
+      logVision(`🚫 Bot kickado: ${reason}`);
+      clearInterval(interval);
       scheduleReconnect();
     });
 
-    // Comando no chat para debug (opcional)
     bot.on('chat', (username, message) => {
-      if (username === bot.username) return;
-      logVision(`💬 ${username}: ${message}`);
+      if (username !== bot.username) {
+        logVision(`💬 ${username}: ${message}`);
+      }
     });
   });
 
-  // Erros
   bot.on('error', (err) => {
-    logVision(`❌ Erro no bot: ${err.stack}`);
+    logVision(`❌ Erro no bot: ${err.message}`);
     scheduleReconnect();
   });
 }
 
-// Reconexão com proteção
+// RECONNECT
 function scheduleReconnect() {
-  if (isReconnecting) {
-    logVision('🔁 Já há uma tentativa de reconexão em andamento.');
-    return;
-  }
-
+  if (isReconnecting) return;
   isReconnecting = true;
+
   if (bot) {
-    bot.removeAllListeners();
+    try {
+      bot.removeAllListeners();
+    } catch {}
     bot = null;
   }
 
-  logVision('⏳ Tentando reconectar em 10 segundos...');
+  logVision('⏳ Reconectando em 10 segundos...');
   reconnectTimeout = setTimeout(() => {
     isReconnecting = false;
     createBot();
   }, 10000);
 }
 
-// Envia dados a todos os clientes WebSocket
+// BROADCAST PARA TODOS OS CLIENTES
 function broadcast(data) {
-  const message = JSON.stringify(data);
-  clients.forEach((ws) => {
+  const json = JSON.stringify(data);
+  clients.forEach(ws => {
     if (ws.readyState === WebSocket.OPEN) {
-      try {
-        ws.send(message);
-      } catch (err) {
-        logVision(`⚠️ Erro ao enviar dados para cliente WebSocket: ${err.message}`);
-      }
+      ws.send(json);
     }
   });
 }
 
-// Servidor HTTP (simples, só pra manter vivo)
+// ==== SERVIDOR HTTP + WEBSOCKET ====
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Servidor do ByteBot online!');
+  if (req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    return res.end(htmlContent);
+  } else if (req.url === '/style.css') {
+    res.writeHead(200, { 'Content-Type': 'text/css' });
+    return res.end(cssContent);
+  } else if (req.url === '/client.js') {
+    res.writeHead(200, { 'Content-Type': 'application/javascript' });
+    return res.end(jsContent);
+  } else {
+    res.writeHead(404);
+    return res.end('404 Not Found');
+  }
 });
 
-// WebSocket server
 const wss = new WebSocket.Server({ server });
-
 wss.on('connection', (ws) => {
-  logVision('📡 Novo cliente WebSocket conectado!');
   clients.push(ws);
+  logVision('📡 Novo cliente conectado.');
 
   ws.on('close', () => {
-    logVision('🔌 Cliente WebSocket desconectado.');
-    clients = clients.filter(client => client !== ws);
+    clients = clients.filter(c => c !== ws);
+    logVision('🔌 Cliente desconectado.');
   });
 
-  ws.on('error', (err) => {
-    logVision(`⚠️ Erro em conexão WebSocket: ${err.message}`);
+  ws.on('error', err => {
+    logVision(`⚠️ WS erro: ${err.message}`);
   });
 });
 
-// Iniciar servidor
-server.listen(HTTP_PORT, () => {
-  logVision(`🚀 Servidor HTTP/WebSocket rodando na porta ${HTTP_PORT}`);
+// ==== INICIA SERVIDOR E BOT ====
+server.listen(PORT, () => {
+  console.log(`🌐 Servidor rodando em http://localhost:${PORT}`);
   createBot();
 });
+
+// ==== HTML EMBUTIDO ====
+const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Visão do ByteBot</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>👁️ Visão do ByteBot</h1>
+  <div id="status">Status: <span class="ok">🟢 Online</span></div>
+  <canvas id="radar" width="400" height="400"></canvas>
+  <h2>📋 Últimos eventos</h2>
+  <ul id="log"></ul>
+  <script src="/client.js"></script>
+</body>
+</html>
+`;
+
+// ==== CSS EMBUTIDO ====
+const cssContent = `
+body {
+  font-family: sans-serif;
+  background: #111;
+  color: #eee;
+  text-align: center;
+  padding: 20px;
+}
+canvas {
+  background: #222;
+  border: 2px solid #444;
+  margin: 10px;
+}
+#log {
+  list-style: none;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 0 auto;
+  width: 400px;
+  background: #1a1a1a;
+  border-radius: 5px;
+  font-size: 14px;
+}
+#log li {
+  padding: 4px 8px;
+  border-bottom: 1px solid #333;
+}
+.ok { color: lightgreen; }
+`;
+
+// ==== JAVASCRIPT EMBUTIDO ====
+const jsContent = `
+const logEl = document.getElementById('log');
+const radar = document.getElementById('radar');
+const ctx = radar.getContext('2d');
+let botPos = { x: 0, z: 0 };
+let players = [];
+
+const socket = new WebSocket('ws://' + location.host);
+
+socket.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.position) {
+    botPos = data.position;
+  }
+  if (data.players) {
+    players = data.players;
+  }
+  if (data.log) {
+    const li = document.createElement('li');
+    li.textContent = data.log;
+    logEl.prepend(li);
+    if (logEl.childNodes.length > 20) {
+      logEl.removeChild(logEl.lastChild);
+    }
+  }
+};
+
+function drawRadar() {
+  ctx.clearRect(0, 0, radar.width, radar.height);
+  const centerX = radar.width / 2;
+  const centerY = radar.height / 2;
+
+  // Desenha o bot
+  ctx.fillStyle = 'lime';
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 6, 0, 2 * Math.PI);
+  ctx.fill();
+
+  // Outros jogadores
+  players.forEach(p => {
+    if (!p.pos) return;
+    const dx = p.pos.x - botPos.x;
+    const dz = p.pos.z - botPos.z;
+    const scale = 2;
+    ctx.fillStyle = 'red';
+    ctx.beginPath();
+    ctx.arc(centerX + dx * scale, centerY + dz * scale, 4, 0, 2 * Math.PI);
+    ctx.fill();
+  });
+
+  requestAnimationFrame(drawRadar);
+}
+drawRadar();
+`;
