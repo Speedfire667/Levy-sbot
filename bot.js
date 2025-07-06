@@ -6,6 +6,9 @@ const PORT = 8080;
 let clients = [];
 let bot = null;
 let reconnectTimeout = null;
+let moveInterval = null;
+let updateInterval = null;
+let connectTimeout = null;
 
 // === FUNÇÃO DE LOG E BROADCAST ===
 function logVision(text) {
@@ -26,29 +29,40 @@ function broadcast(data) {
 
 // === CRIAR BOT ===
 function createBot() {
-  if (bot !== null) return;
+  if (bot !== null) {
+    logVision('Bot já está ativo, não criando outro.');
+    return;
+  }
 
   const username = `ByteBot_${Math.floor(Math.random() * 9999)}`;
-  logVision(`🤖 Criando bot como ${username}`);
+  logVision(`🤖 Tentando criar bot com usuário: ${username}`);
 
   bot = mineflayer.createBot({
     host: 'Speedfire1237.aternos.me',
     port: 36424,
     username,
     version: '1.12.2',
-    auth: 'offline'
+    auth: 'offline',
   });
 
-  let moveInterval = null;
+  // Timeout para detectar se a conexão está travada (ex: servidor inacessível)
+  connectTimeout = setTimeout(() => {
+    logVision('⏰ Timeout: bot demorou para conectar, encerrando tentativa.');
+    bot.quit();
+    cleanupBot();
+    scheduleReconnect();
+  }, 15000); // 15 segundos para conectar
 
-  bot.on('spawn', () => {
+  bot.once('spawn', () => {
+    clearTimeout(connectTimeout);
     logVision(`✅ Bot conectado: ${bot.username}`);
 
-    // Movimento automático para evitar kick
+    // Intervalo de movimentação para evitar kick
+    if (moveInterval) clearInterval(moveInterval);
     moveInterval = setInterval(() => {
       if (!bot.entity) return;
-
-      const dir = ['forward', 'back', 'left', 'right'][Math.floor(Math.random() * 4)];
+      const directions = ['forward', 'back', 'left', 'right'];
+      const dir = directions[Math.floor(Math.random() * directions.length)];
       const jump = Math.random() < 0.3;
 
       bot.clearControlStates();
@@ -58,53 +72,84 @@ function createBot() {
       setTimeout(() => bot.clearControlStates(), 1000);
     }, 8000);
 
-    // Envia posição + jogadores
-    const updateInterval = setInterval(() => {
+    // Intervalo para enviar posição e jogadores
+    if (updateInterval) clearInterval(updateInterval);
+    updateInterval = setInterval(() => {
       if (!bot.entity) return;
 
-      const position = bot.entity.position;
+      const position = {
+        x: bot.entity.position.x,
+        y: bot.entity.position.y,
+        z: bot.entity.position.z,
+      };
+
       const players = Object.values(bot.players).map(p => ({
         username: p.username,
-        pos: p.entity ? p.entity.position : null
+        pos: p.entity ? { x: p.entity.position.x, y: p.entity.position.y, z: p.entity.position.z } : null
       }));
 
       broadcast({ position, players });
     }, 1000);
+  });
 
-    bot.on('chat', (username, message) => {
-      if (username !== bot.username) {
-        logVision(`💬 ${username}: ${message}`);
-      }
-    });
+  bot.on('chat', (username, message) => {
+    if (username !== bot.username) {
+      logVision(`💬 ${username}: ${message}`);
+    }
+  });
 
-    bot.once('end', () => {
-      logVision('🔴 Bot desconectado');
-      clearInterval(updateInterval);
-      clearInterval(moveInterval);
-      bot = null;
-      scheduleReconnect();
-    });
+  bot.once('end', () => {
+    logVision('🔴 Bot desconectado');
+    cleanupBot();
+    scheduleReconnect();
+  });
 
-    bot.once('kicked', (reason) => {
-      logVision(`🚫 Bot kickado: ${reason}`);
-      clearInterval(updateInterval);
-      clearInterval(moveInterval);
-      bot = null;
-      scheduleReconnect();
-    });
+  bot.once('kicked', (reason, loggedIn) => {
+    logVision(`🚫 Bot kickado: ${reason} (logado? ${loggedIn})`);
+    cleanupBot();
+    scheduleReconnect();
   });
 
   bot.on('error', err => {
-    logVision(`❌ Erro: ${err.message}`);
-    bot = null;
+    logVision(`❌ Erro do bot: ${err.message}`);
+    cleanupBot();
     scheduleReconnect();
   });
+
+  bot.on('login', () => {
+    logVision('🔑 Bot fez login no servidor.');
+  });
+}
+
+// Função para limpar intervals e resetar variável bot
+function cleanupBot() {
+  if (moveInterval) {
+    clearInterval(moveInterval);
+    moveInterval = null;
+  }
+  if (updateInterval) {
+    clearInterval(updateInterval);
+    updateInterval = null;
+  }
+  if (connectTimeout) {
+    clearTimeout(connectTimeout);
+    connectTimeout = null;
+  }
+  if (bot) {
+    try {
+      bot.quit();
+    } catch (_) {}
+  }
+  bot = null;
 }
 
 // === RECONEXÃO ===
 function scheduleReconnect() {
-  if (reconnectTimeout) return;
-  logVision('⏳ Reconnect em 10 segundos...');
+  if (reconnectTimeout) {
+    logVision('Já há uma reconexão agendada, ignorando nova.');
+    return;
+  }
+  logVision('⏳ Reconectando em 10 segundos...');
   reconnectTimeout = setTimeout(() => {
     reconnectTimeout = null;
     createBot();
@@ -112,8 +157,7 @@ function scheduleReconnect() {
 }
 
 // === SERVIDOR HTTP + WEBSOCKET ===
-const html = `
-<!DOCTYPE html>
+const html = `<!DOCTYPE html>
 <html>
 <head>
   <title>Visão ByteBot</title>
@@ -147,6 +191,17 @@ const html = `
         if (logEl.children.length > 20) logEl.removeChild(logEl.lastChild);
       }
     };
+    socket.onerror = e => {
+      console.error('WebSocket error:', e);
+      const li = document.createElement('li');
+      li.textContent = '[WebSocket] Erro na conexão';
+      logEl.prepend(li);
+    };
+    socket.onclose = e => {
+      const li = document.createElement('li');
+      li.textContent = '[WebSocket] Conexão fechada';
+      logEl.prepend(li);
+    };
 
     function draw() {
       ctx.clearRect(0, 0, 400, 400);
@@ -174,20 +229,20 @@ const html = `
     draw();
   </script>
 </body>
-</html>
-`;
+</html>`;
 
 const server = http.createServer((req, res) => {
   if (req.url === '/') {
-    res.writeHead(200, {'Content-Type': 'text/html'});
+    res.writeHead(200, { 'Content-Type': 'text/html' });
     return res.end(html);
   } else {
     res.writeHead(404);
-    res.end('404');
+    res.end('404 Not Found');
   }
 });
 
 const wss = new WebSocket.Server({ server });
+
 wss.on('connection', (ws) => {
   clients.push(ws);
   logVision('📡 Cliente conectado');
@@ -196,10 +251,15 @@ wss.on('connection', (ws) => {
     clients = clients.filter(c => c !== ws);
     logVision('🔌 Cliente desconectado');
   });
+
+  ws.on('error', (err) => {
+    logVision(`❌ Erro WebSocket cliente: ${err.message}`);
+  });
 });
 
 // === INICIAR SERVIDOR E BOT ===
 server.listen(PORT, () => {
   console.log(`🌍 Acesse http://localhost:${PORT}`);
+  logVision(`Servidor iniciado na porta ${PORT}`);
   createBot();
 });
